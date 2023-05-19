@@ -5,7 +5,7 @@ from picamera import PiCamera
 import picamera.array
 import cv2   
 from datetime import datetime
-
+import paho.mqtt.client as mqtt
 import os
 import subprocess
 import requests
@@ -15,15 +15,26 @@ class MJpegStreamCam:
         self.size = (width, height)
         self.framerate = framerate
         self.frames_to_save = [] # 프레임 저장 공간
-        self.max_files = 3  # 최대 5개 (약 50초)의 영상 관리
-        self.save_directory = "/home/pi/workspace/iot_server/media" # 프레임 to .mp4 변환 후 저장할 폴더
+        self.max_files = 5  # 최대 5개 (약 50초)의 영상 관리
+        self.save_directory = "/home/pi/workspace/iot_server/media/temp_video" # 프레임 to .mp4 변환 후 저장할 폴더
 
         self.camera = PiCamera()
         self.camera.rotation = 0
         self.camera.resolution = self.size
         self.camera.framerate = self.framerate
 
+        self.client = mqtt.Client()
+        self.host_id = '172.30.1.75'
+        self.port = 1883
         self.istilt=False
+
+        try:
+            self.client.on_connect = self.on_connect
+            self.client.on_message = self.on_message
+            self.client.connect(self.host_id, self.port, 60)
+            self.client.loop_start()
+        except Exception as err:
+            print(f"ERR ! /{err}/")
 
     def __del__(self):
         self.camera.close()
@@ -83,6 +94,7 @@ class MJpegStreamCam:
         
     # 녹화 파일 관리 메소드
     def cleanup_files(self):
+        print("파일 정리 하실게요~")
         files = sorted(os.listdir(self.save_directory))
         num_files = len(files)
 
@@ -95,7 +107,7 @@ class MJpegStreamCam:
 
     # 충격 감지
     def tilt_on(self):
-        print("충격 감지 !!! ")
+        print("@@@충격 감지@@@")
         # 현재 self.frames_to_save 리스트에 있는 프레임 개수 상관없이 즉시 mp4로 저장
         self.save_frames_as_mp4()
         self.frames_to_save=[]
@@ -104,11 +116,10 @@ class MJpegStreamCam:
         # [::-2] 방금 저장한거 + 최근꺼 1개 업로드
         self.upload_file(files[-1])
         self.upload_file(files[-2])
-        print("업로드 완료")
-
+        
         self.cleanup_files()
 
-        self.istitle=False
+        self.istilt=False
 
 
     def upload_file(self, file_name):
@@ -129,3 +140,20 @@ class MJpegStreamCam:
                 print(f"{file_path} 업로드 완료")
             except requests.exceptions.RequestException as e:
                 print(f"{file_path} 업로드 실패: {e}")
+
+    def on_connect(self, client, userdata, flags, rc):
+        print("Connected with result code " + str(rc))
+        if rc == 0:
+            print("MQTT 연결 성공, rccar/response/# 구독 신청 . . @. @. . ")
+            self.client.subscribe("rccar/response/#")
+        else: 
+            print("연결 실패 : ", rc)
+
+    
+    def on_message(self, client, userdata, msg):
+        value = str(msg.payload.decode())
+        _, _, router = msg.topic.split("/")
+
+        if router=="tilt":
+            print("기울었다고 전해라")
+            self.istilt=True
